@@ -1,0 +1,633 @@
+---
+title: "Fallstudie"
+author: "Urs Walcher"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    fig_caption: yes
+    fig_height: 4.5
+    fig_width: 7
+    highlight: tango
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# ***Bibliotheken laden***
+
+```{r load_libraries, message = FALSE, echo = TRUE}
+
+## Bliotheken laden
+
+library(caret)
+library(readr)
+library(dplyr)
+library(corrplot)
+library(caret)
+library(randomForest)
+```
+
+# ***Daten einlesen und aufbereiten***
+
+## ***Dateien einlesen***
+
+```{r}
+data_tst <- read.csv("daten/bloodtrain.csv", header = TRUE)
+data_prd <- read.csv("daten/bloodtest.csv", header = TRUE)
+```
+### ***Stuktur der Daten anzeigen***
+```{r}
+# Struktur anzeigen
+str(data_tst)
+dim(data_tst)
+```
+576 Zeilen Trainingsdaten (Observations) und 6 Spalten (Variablen) eingelesen.  
+
+```{r}
+# Tabelle Anzeigen
+str(data_prd)
+dim(data_prd)
+```
+200 Zeilen Validierungssdaten (Observations) und 5 Spalten (Variablen) eingelesen.  
+
+## ***Daten bereinigen***
+
+### ***Spaltennamen anpassen***
+
+```{r names_set, echo=TRUE}
+
+data_tst <- data_tst %>% 
+  rename(
+    id = "X",
+    msld = "Months.since.Last.Donation",
+    nod = "Number.of.Donations",
+    tvd = "Total.Volume.Donated..c.c..",
+    msfd = "Months.since.First.Donation",
+    mdim07 = "Made.Donation.in.March.2007"
+  )
+
+str(data_tst)
+```
+Alle Spaltennamen auf Kurzform angepasst (erster Wortbuchstabe verwendet).  
+
+
+### ***Daten auf unvollständige Zeilen prüfen***
+
+#### ***N/A-Werte***
+  
+```{r miss_check1, echo=TRUE}
+
+# Auf fehlende "N/A" Werte prüfen
+na_tst <- sapply(data_tst,function(x) sum(is.na(x)))
+na_prd <- sapply(data_prd,function(x) sum(is.na(x)))
+print(na_tst)
+print(na_prd)
+```
+Keine"N/A" Werte vorhanden, die korrigert werden müssen.  
+
+#### ***Leerzeichen***
+
+```{r miss_check2, echo=TRUE}
+# Auf fehlende " " Werte prüfen
+na_tst <- sapply(data_tst,function(x) sum(x==""))
+na_prd <- sapply(data_prd,function(x) sum(x==""))
+print(na_tst)
+print(na_prd)
+```
+Keine Leerzeichen vorhanden, die korrigert werden müssen.  
+
+#### ***Werte korrigieren***
+
+```{r miss_check3, echo=TRUE}
+#Sollte es Nullwerte haben könnte man die Imputation anwenden (Beispiel)
+if(na_tst > 0){
+print("NULLWERT!!!!!!!")
+preproc_df = preProcess(df, method = "bagImpute")
+df <- predict(preproc_df, df)
+}
+```
+Beispiel Datenkorrektur.
+
+### ***Daten auf doppelte Zeilen prüfen***
+  
+```{r dup_check, echo=TRUE, include = FALSE}
+# Daten auf doppelte Zeilen überprüfen
+data_tst[duplicated(data_tst),]
+data_new <- data_tst[duplicated(data_tst)==FALSE,]
+#### ueberpruefen
+dim(data_new)
+data_new
+print(sort(data_new[,1]))
+
+```
+Nur zu Dokumentationszwecken verwendet.
+
+# ***Erste Datenanalyse***
+
+## ***Vergleich der gelieferten Trainings- und Test-Daten***
+
+```{r, check_train, echo=FALSE}
+ 
+## Histogram mit der Trendline der Trainingsdaten
+panel.hist <- function(x, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(usr[1:2], 0, 1.5) )
+    h <- hist(x, plot = FALSE)
+    breaks <- h$breaks; nB <- length(breaks)
+    y <- h$counts; y <- y/max(y)
+    rect(breaks[-nB], 0, breaks[-1], y, col = "cyan", ...)
+}
+
+pairs(data_tst[1:5], panel = panel.smooth,
+      cex = 1.0, pch = 22, bg = "light blue",
+      diag.panel = panel.hist, cex.labels = 2, font.labels = 2,  main="Scatterplots der Trainingsdaten")
+
+summary(data_tst)
+```
+Scatterplots und "Summary" der Trainingsdaten.  
+
+```{r, check_test, echo=FALSE}
+
+## Histogram mit der Trendline der Testdaten
+
+panel.hist <- function(x, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(usr[1:2], 0, 1.5) )
+    h <- hist(x, plot = FALSE)
+    breaks <- h$breaks; nB <- length(breaks)
+    y <- h$counts; y <- y/max(y)
+    rect(breaks[-nB], 0, breaks[-1], y, col = "cyan", ...)
+}
+pairs(data_prd[1:5], panel = panel.smooth,
+      cex = 1.0, pch = 22, bg = "light blue",
+      diag.panel = panel.hist, cex.labels = 2, font.labels = 2, main="Histogramme der Testdaten")
+
+summary(data_prd)
+```
+Scatterplots und "Summary" der Validierungsdaten.  
+
+Fazit dese Vergleiches: - Trainings- und Validierungsdaten stimmen ziemlich überein. Die Daten können verwendet werden. 
+Auch das "Summary" liefert annähernd die gleichen Werte.
+
+## ***Schneller, visualisierter Blick in die Daten***
+
+### ***Daten in "train" und "validate" aufteilen***
+  
+```{r, split_data, echo=TRUE}
+
+# Daten in Trainings- und Testdaten aufteilen 
+
+partition <- createDataPartition(data_tst[,1], times = 1, p = 0.75,list = FALSE)
+train <- data_tst[partition,] # Trainings-Daten
+validate  <- data_tst[-partition,] # Test-Daten
+
+```
+
+```{r dim_data1, echo=TRUE}
+dim(train)
+dim(validate)
+
+```
+Daten in Trainings- und Testdaten aufgeteilt. 
+
+### ***Frequenz anzeigen***
+
+```{r, print_hist1, echo=FALSE}
+
+### Histogramme anzeigen
+
+par(mfrow=c(2,2))
+for(i in 2:5) {
+    hist(train[,i], main=names(train)[i])
+}
+```
+
+### ***Density anzeigen***
+
+```{r,  print_hist2, echo=FALSE}
+
+par(mfrow=c(2,2))
+for(i in 2:5) {
+  dta_A <- density(train[ ,i], na.rm = TRUE)
+  dta_B <- density(validate[ ,i], na.rm = TRUE)
+  plot(dta_A, col = "blue", main=names(train)[i]) 
+  lines(dta_B, col = "red")
+  # plot(density(train[,i]), main=names(train)[i])
+}
+```
+
+### ***Gesamtüberblick der Daten***
+
+```{r,  print_hist13, echo=FALSE}
+
+jittered_x <- sapply(train[,2:5], jitter)
+pairs(jittered_x, names(train[,2:5]), col=(train$mdim07)+1)
+
+```
+
+# ***Korrelationen***
+
+
+## ***Schnellübersicht***
+
+```{r, cor1, echo=FALSE}
+  cor(train[2:5])
+```
+
+
+```{r, cor3, echo=FALSE}
+  M <- cor(train)
+  corrplot.mixed(M)
+```
+
+```{r, cor2, echo=FALSE}
+  cor(train$nod,train$msfd)
+```
+
+Die Werte zeigen eine Korrelation zwischen msfd (Month since first donation) und der Anzahl der Spenden (nod(numbers of donation)).
+Da tvd & nod in Abhängigkeit zueinander stehen, kann tvd entfernt werden.
+
+## ***Unnötige Variabeln entfernen***
+  
+```{r remove_var, echo=TRUE, warning = FALSE}
+
+# Variable "tvd" entfernen
+  
+useless <- c("tvd")
+train <- train[,!(names(train) %in% useless)]
+validate <- validate[,!(names(validate) %in% useless)]
+str(train)
+str(validate)
+``` 
+Variablen "Total volume donated" entfernt (überflüssig). 
+
+## ***Variable "mdim07" in Faktor umwandeln***
+  
+```{r factor_var, echo=TRUE, warning = FALSE}
+
+# Variable "mdim07" in Faktor umwandeln
+  
+req_labels <- train['mdim07']
+rec_labels <- recode(req_labels$mdim07,'0' = "No", '1' = "Yes")
+train$mdim07 <- rec_labels
+train$mdim07  <-as.factor(train$mdim07)
+
+str(train)
+``` 
+Variable "mdim07" in Faktor umwandeln.
+
+# ***Machine Learning***  
+
+## ***Logistische Regression***
+
+### ***Mit Standartwerten und mit "logloss" als Metrik***
+  
+```{r default_values, echo=TRUE, warning = FALSE}
+
+# Standartwerte setzen
+
+trainControl <- trainControl(method="repeatedcv", summaryFunction=mnLogLoss, number=10, repeats=3, classProbs=TRUE)
+
+metric <- "logLoss"
+
+# Logistische Regressionen
+
+set.seed(101)
+fit.glm <- train(mdim07~., data=train, method="glm", metric=metric, trControl=trainControl) # GLM
+
+set.seed(101)
+fit.lda <- train(mdim07~., data=train, method="lda", metric=metric, trControl=trainControl) # LDA
+
+set.seed(101)
+fit.glmnet <- train(mdim07~., data=train, method="glmnet", metric=metric,trControl=trainControl)  # GLMNET
+
+set.seed(101)
+fit.cart <- train(mdim07~., data=train, method="rpart", metric=metric,trControl=trainControl)  # CART
+
+set.seed(101)
+fit.svm <- train(mdim07~., data=train, method="svmRadial", metric=metric, trControl=trainControl)  # SVM
+```
+
+#### ***Auswertung***
+  
+```{r default_values_results, echo=TRUE, warning = FALSE}
+
+# Auswertung
+
+results <- resamples(list(LG=fit.glm, LDA=fit.lda, GLMNET=fit.glmnet, CART=fit.cart, SVM=fit.svm))
+summary(results)
+dotplot(results)
+
+```
+
+Der "logLoss" sollte möglichst tief sein. "GLMNET" bringt die beste Performance.
+
+### ***Optimierung mit "Box Cox" Transformation und mit "logLoss" als Metrik***
+  
+```{r boxcox_values, echo=TRUE, warning = FALSE}
+
+# Standartwerte und BoxCox setzen
+
+trainControl <- trainControl(method="repeatedcv", summaryFunction=mnLogLoss, number=10, repeats=3, classProbs=TRUE)
+
+preProcess="BoxCox"
+
+metric <- "logLoss"
+
+# Logistische Regressionen
+
+set.seed(101)
+fit.glm <- train(mdim07~., data=train, method="glm", metric=metric, trControl=trainControl, preProc=preProcess) # GLM
+
+set.seed(101)
+fit.lda <- train(mdim07~., data=train, method="lda", metric=metric, trControl=trainControl, preProc=preProcess) # LDA
+
+set.seed(101)
+fit.glmnet <- train(mdim07~., data=train, method="glmnet", metric=metric,trControl=trainControl, preProc=preProcess)  # GLMNET
+
+set.seed(101)
+fit.cart <- train(mdim07~., data=train, method="rpart", metric=metric,trControl=trainControl, preProc=preProcess)  # CART
+
+set.seed(101)
+fit.svm <- train(mdim07~., data=train, method="svmRadial", metric=metric, trControl=trainControl, preProc=preProcess)  # SVM
+```
+
+#### ***Auswertung***
+  
+```{r expl_boxcox, echo=FALSE, warning = FALSE}
+
+# "CoxBox" Optimierung anhand GLMNET
+
+print(fit.glmnet)
+
+```
+
+Zeigt die "CoxBox"-Optimierung auf und welchen Wert für "alpha" und "lambda" verwendet wurden.
+
+#### ***Auswertung***
+  
+```{r boxcox_values_results, echo=FALSE, warning = FALSE}
+
+# Auswertung
+
+results <- resamples(list(LG=fit.glm, LDA=fit.lda, GLMNET=fit.glmnet, CART=fit.cart, SVM=fit.svm))
+summary(results)
+dotplot(results)
+
+```
+
+Allgemein leichte Verbesserung bei den Werten und wieder bringt "GLMNET" die beste Performance.
+
+## ***Random Forest, GBM & C5.0***
+  
+```{r random.forest, echo=TRUE, warning = FALSE}
+
+trainControl <- trainControl(method="repeatedcv", summaryFunction=mnLogLoss, number=10, repeats=3, classProbs=TRUE)
+metric <- "logLoss"
+preProcess = "BoxCox"
+
+set.seed(101)
+fit.rf <- train(mdim07~., data=train, method="rf", metric=metric, preProc=preProcess, trControl=trainControl)  # Random Forest
+
+```
+
+```{r GBM, echo=TRUE, warning = FALSE}
+
+set.seed(101)
+fit.gbm <- train(mdim07~., data=train, method="gbm", metric=metric, preProc=preProcess,
+                 trControl=trainControl, verbose=FALSE)  # Gradient Boosting Machine
+```
+
+```{r C50, echo=TRUE, message = FALSE, warning = FALSE}
+
+set.seed(101)
+fit.c50 <- train(mdim07~., data=train, method="C5.0", metric=metric, preProc=preProcess,
+                 trControl=trainControl)  # C5.0
+```
+
+### ***Auswertung***
+
+```{r rf_results, echo=TRUE, message = FALSE, warning = FALSE}
+
+# Resultate
+
+ensembleResults <- resamples(list(RF=fit.rf, GBM=fit.gbm, C50=fit.c50))
+summary(ensembleResults)
+dotplot(ensembleResults)
+
+```
+
+Bei diesen Methoden bringt "GBM" (Gradient Boosting Machine) die besten Werte, aber anhand der schlechteren Laufzeiten im Vergleich zu den logistischen Regressionen, werde ich nur noch "GLMNET" bevorzugen.
+
+## ***Validation***
+
+### ***Validation mit dem "Validate-Set" durchführen***
+  
+```{r validate_data, echo=TRUE, warning = FALSE}
+
+# Variable "mdim07" in Faktor umwandeln
+
+req_labels <- validate['mdim07']
+rec_labels <- recode(req_labels$mdim07,'0' = "No", '1' = "Yes")
+validate$mdim07 <- rec_labels
+validate$mdim07  <-as.factor(validate$mdim07)
+
+str(validate)
+
+# GLMNET mit dem "validate-Datenset"
+
+set.seed(101)
+test.pred <- predict(fit.glmnet, newdata=validate, type  = "prob") # GLMNET
+
+
+```
+
+#### ***Auswertung***
+  
+```{r validate_results, echo=TRUE, warning = FALSE}
+
+# Auswertung
+
+# logLoss kalkulieren
+LogLoss <- function(actual, predicted, eps=0.00001) {
+  predicted <- pmin(pmax(predicted, eps), 1-eps)
+  -1/length(actual)*(sum(actual*log(predicted)+(1-actual)*log(1-predicted)))
+}
+
+# Labels wieder in "0" und "1" ändern
+req_labels <- validate['mdim07']
+rec_labels <- recode(req_labels$mdim07,  "No" = '0' , "Yes" = '1')
+validate$mdim07 <- rec_labels
+
+# LogLoss bestimmen
+log.loss <- LogLoss(as.numeric(as.character(validate$mdim07)), test.pred$Yes)
+print(log.loss)
+
+```
+Der "logLoss" sollte möglichst tief sein und ich denke 0.37 ist ein guter Wert. Wir können dies also auf unsere Produktiven-Daten anwenden und die "Submission-Datei erstellen.
+
+## ***Test- oder Produktive-Daten vorhersagen***
+
+### ***Vorhersage mit dem "Test-Set" durchführen***
+  
+```{r test_prd, echo=TRUE, warning = FALSE}
+
+# Spaltennamen anpassen
+
+data_prd <- data_prd %>% 
+    rename(
+    id = "X",
+    msld = "Months.since.Last.Donation",
+    nod = "Number.of.Donations",
+    tvd = "Total.Volume.Donated..c.c..",
+    msfd = "Months.since.First.Donation",
+    )
+
+str(data_prd)
+
+# Vorhersage durchführen
+set.seed(101)
+predictions <- predict(fit.glmnet, newdata=data_prd, type  = "prob")
+```
+
+### ***Daten preparieren und hochladen***
+
+```{r test_prd_upload, echo=TRUE, warning = FALSE}
+
+# Submissions-Datei einlesen und Daten abfüllen.
+
+submission_format <- read.csv("daten/submission_format.csv", check.names=FALSE)
+submission_format <- submission_format[,-2] # Bestehende "Did Donation" entfernen
+pred.df <- as.data.frame(predictions$Yes) #Vorhersagen in DataFrame umwandeln
+submission_format <- cbind(submission_format, pred.df) # Vorhersage anhängen
+
+submission_format <- submission_format %>% # Spalten umbennenen
+    rename(
+    ID = "submission_format",
+    'Made Donation in March 2007' = "predictions$Yes",
+    )
+
+write.csv(submission_format, file="daten/submission_final.csv", row.names=FALSE ) #CSV-Datei erstellen
+
+```
+
+### ***Schlussresultat anzeigen***
+
+```{r show_csv, echo=TRUE, warning = FALSE}
+
+# Submissions-Datei anzeigen.
+
+head(submission_format, n = 25L)
+
+```
+
+# ***Anhänge***
+
+## ***Anhang A***
+
+### ***KNN***
+```{r knn, echo=TRUE, warning = FALSE}
+
+# Vorhersage-Qualitaet: log loss Funktion, d.h unser Bewertungskriterium
+# --------------------------------------
+# Funktion definieren, die log loss berechnet
+
+train.knn <- read.csv("daten/bloodtrain.csv", header = TRUE)
+
+train.knn <- train.knn %>% 
+  rename(
+    id = "X",
+    msld = "Months.since.Last.Donation",
+    nod = "Number.of.Donations",
+    tvd = "Total.Volume.Donated..c.c..",
+    msfd = "Months.since.First.Donation",
+    mdim2007 = "Made.Donation.in.March.2007"
+  )
+
+
+log_loss <- function(actual, predicted, eps = 1e-15){
+  actual[actual == "yes"] <- 1
+  actual[actual == "no"] <- 0
+  actual <- as.numeric(actual)
+  # Bound probabilities (0,1) for computational purposes
+  predicted[predicted < eps] <- eps
+  predicted[predicted > 1 - eps] <- 1 - eps
+  result=-1/length(actual)*(sum((actual*log(predicted)+(1-actual)*log(1-predicted))))
+  return(result)
+}
+
+train.knn$mdim2007[train.knn$mdim2007 ==1] <- "yes"
+train.knn$mdim2007[train.knn$mdim2007 ==0] <- "no"
+
+
+# Train KNN algorithm
+# --------------------------------------
+# Anteil fuer Traing-Daten waehlen
+
+split_size = 0.7
+
+# Startwert / seed waehlen --> Reproduzierbarkeit
+set.seed(123)
+
+# Initialize data frame of cross-validation log loss
+# --------------------------------------
+knn_cv_results <- data.frame(matrix(ncol = 6, nrow = 20))
+knn_cv_results[,1] <- c(1:20)
+colnames(knn_cv_results) <- c("k", "iter1", "iter2", "iter3", "iter4", "iter5")
+
+# Perform repeated cross-validation for KNN to tune K
+for (i in 1:20){
+  for (j in 1:5){
+    # Zufälligen Index für das Auswaheln von Subsamles definieren
+    cv_idx <- sample(nrow(train.knn), nrow(train.knn)*split_size, replace = FALSE)
+    
+    # Split der Daten in Training-Set und Validation-Set, ID-Spalte weglassen
+    cv_tr <- train.knn[cv_idx,-1]
+    cv_val <- train.knn[-cv_idx,-1]
+    
+    
+    # K festsetzen
+    cv_grid <- expand.grid(k = c(i))
+    
+    # kNN-Modell trainieren
+    knn_cv <- train(as.factor(mdim2007) ~ msfd + msld + nod + mdim2007,
+                    data = cv_tr,
+                    method = "knn",
+                    tuneGrid = cv_grid)
+    
+    # Vorhersage machen mit Hilfe des Validierungs-Set
+    pred_cv <- predict(knn_cv, cv_val, type = "prob")
+    
+    # Resultate festhalten -- i-te Zeile, (j+1). Spalte
+    knn_cv_results[i,j+1] <- log_loss(cv_val$mdim2007, pred_cv$yes)
+  }
+}
+
+# Durchschnittl. log loss fuer jeden Wert von K berechnen
+# -----------------------------------------------------------
+knn_cv_results$avg_log_loss <- rowSums(knn_cv_results[,2:6])/5
+
+# Ansehen
+knn_cv_results$avg_log_loss
+
+# Anzeigen
+str(knn_cv_results)
+
+```
+
+## ***Anhang B***
+
+### ***R Code***
+```{r ref.label=knitr::all_labels(), echo = T, eval = F}
+
+```
