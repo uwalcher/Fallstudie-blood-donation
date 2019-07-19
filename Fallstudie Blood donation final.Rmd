@@ -366,13 +366,13 @@ fit.svm <- train(mdim07~., data=train, method="svmRadial", metric=metric, trCont
   
 ```{r expl_boxcox, echo=FALSE, warning = FALSE}
 
-# "CoxBox" Optimierung anhand GLMNET
+# "BoxCox" Optimierung anhand GLMNET
 
 print(fit.glmnet)
 
 ```
 
-Zeigt die "CoxBox"-Optimierung auf und welchen Wert für "alpha" und "lambda" verwendet wurden.
+Zeigt die "BoxCox"-Optimierung auf und welchen Wert für "alpha" und "lambda" verwendet wurden.
 
 #### ***Auswertung***
   
